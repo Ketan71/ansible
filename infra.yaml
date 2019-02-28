@@ -218,7 +218,7 @@
         name: "{{ target_group_name }}"
         protocol: http
         port: 80
-        #vpc_id: "{{ vpc_id }}"
+        vpc_id: "{{ vpc_id }}"
         aws_region: "{{ region }}"
         health_check_path: /
         targets:

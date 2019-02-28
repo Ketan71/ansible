@@ -7,7 +7,7 @@ az2: "ap-southeast-1b"
 # VPC
 vpc_cidr: 10.10.0.0/20
 vpc_name: "CI-CD VPC"
-
+vpc1: "vpc-0eaefb204a4e11f17" 
 # Subnet
 subnet_name_pub: "CI-CD Subnet 1"
 subnet_cidr_pub: 10.10.0.0/24
