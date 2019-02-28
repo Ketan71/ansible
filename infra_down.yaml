@@ -1,0 +1,44 @@
+---
+- name: terminating EC2, Load Balancer, Target group
+  hosts: localhost
+  vars_files:
+    - vars.yaml
+  tasks:
+    - ec2_instance_facts:
+        filters:
+          "tag:owner": ci-cd
+          "instance-state-name": running
+        region: "{{ region }}"
+      register: ec2_data
+    - name: set instance id into variable
+      set_fact:
+        instance1_id: "{{ ec2_data.instances[0].instance_id }}"
+        instance2_id: "{{ ec2_data.instances[1].instance_id }}"
+
+    - name: terminate ec2
+      ec2:
+        instance_ids:
+        - "{{ instance1_id }}"
+        - "{{ instance2_id }}"
+        region: "{{ region }}"
+        state: absent
+        wait: True
+      register: ec2
+    - debug:
+        msg: "{{ ec2 }}"
+    
+    - name: delete EC2_ELB
+      elb_application_lb:
+        name: "{{ elb_name }}"
+        region: "{{ region }}"
+        state: absent
+
+    - name: deleting target group
+      pause:
+        seconds: 120
+    - name: deledting target group
+      elb_target_group:
+        name: "{{ target_group_name }}"
+        region: "{{ region }}"
+        state: absent
+      

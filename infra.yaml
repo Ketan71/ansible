@@ -1,0 +1,250 @@
+---
+- name: creating vpc and subnet
+  hosts: localhost
+  vars_files:
+    - vars.yaml
+  tasks:
+# creating vpc
+    - name: create vpc
+      ec2_vpc_net:
+        name: "{{ vpc_name }}"
+        cidr_block: "{{ vpc_cidr }}"
+        region: "{{ region }}"
+        state: present
+      register: vpc
+
+    - name: Set VPC ID in variable
+      set_fact:
+        vpc_id: "{{ vpc.vpc.id }}"
+    - debug:
+         msg: "{{ vpc_id }}"
+
+# creating 2 subnet in different AZ
+    - name: associate subnet to the VPC
+      ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ region }}"
+        az: "{{ az1 }}"
+        cidr: "{{ subnet_cidr_pub }}"
+        map_public: yes
+        resource_tags:
+          Name: "{{ subnet_name_pub }}"
+      register: subnet1
+
+    - name: associate subnet2 to the VPC
+      ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ region }}"
+        az: "{{ az2 }}"
+        cidr: "{{ subnet_cidr_pvt }}"
+        map_public: yes
+        resource_tags:
+          Name: "{{ subnet_name_pvt }}"
+      register: subnet2
+    - name: set subnet ID in variable
+      set_fact:
+        subnet1_id: "{{ subnet1.subnet.id }}"
+        subnet2_id: "{{ subnet2.subnet.id }}"
+    - debug:
+        msg: "{{ subnet2_id }}" 
+    - debug:
+        msg: "{{ subnet1_id }}"
+
+# Creating two security group for ec2 and Loadbalancer  
+    - name: Create Security Group For Load Balancer
+      ec2_group:
+        name: CI-CD-Loadbalancer-sg 
+        description: CI-CD Security Group for web
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ region }}"
+        rules:
+         - proto: tcp
+           ports:
+           - 80
+           - 443
+           cidr_ip: 0.0.0.0/0
+         - proto: tcp
+           ports:
+           - 22
+           cidr_ip: 0.0.0.0/0
+      register: security_group_lb
+    - debug:
+        msg: "{{ security_group_lb.group_id }}"
+
+    - name: Get Public_IP
+      shell: host myip.opendns.com resolver1.opendns.com | grep  address | awk '{print$4}'
+      register: shell
+    - debug:
+        msg: "{{ shell.stdout }}"
+    - name: set public ip 
+      set_fact:
+        public_ip: "{{ shell.stdout }}"
+    - debug:
+        msg: "{{ public_ip }}"
+
+    - name: create security group for EC2
+      ec2_group:
+        name: CI-CD-EC2-sg  
+        description: CI-CD Security Group for ec2
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ region }}"
+        rules:
+         - proto: tcp
+           ports:
+           - 22
+           cidr_ip: 
+           - "{{ public_ip }}/32"
+         - proto: icmp
+           from_port: 8
+           to_port: -1
+           cidr_ip:
+           - "{{ vpc_cidr }}"
+           - "{{ public_ip }}/32"
+         - proto: tcp
+           ports:
+           - 80
+           - 443
+           cidr_ip: 
+           - 0.0.0.0/0
+
+      register: security_group_ec2
+    - debug:
+        msg: "{{ security_group_ec2.group_id }}"
+    - name: set security_group id in variable
+      set_fact:
+        elb_sg: "{{ security_group_lb.group_id }}"
+        ec2_sg: "{{ security_group_ec2.group_id }}"
+    - debug:
+        msg: "{{ elb_sg }}"
+    - debug:
+        msg: "{{ ec2_sg }}"
+
+# Creating IGW and Route for IGW
+    - name: create IGW
+      ec2_vpc_igw:
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ region }}"
+        state: "present"
+        tags:
+          Name: "{{ igw_name }}"
+      register: igw
+
+
+    - name: Route IGW
+      ec2_vpc_route_table:
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ region }}"
+        subnets:
+        - "{{ subnet1_id }}"
+        - "{{ subnet2_id }}"
+        routes:
+        - dest: 0.0.0.0/0
+          gateway_id: "{{ igw.gateway_id  }}"
+        tags:
+          Name: "{{ route_name }}"
+
+# Creating 2 ec2-instance in two different Subnets
+    - name: create an EC2 instance
+      ec2:
+        key_name: "{{ keypair }}"
+        group_id: "{{ ec2_sg }}"
+        instance_type: "{{ instance_type }}"
+        image: "{{ ami }}"
+        wait: true
+        region: "{{ region }}"
+        instance_tags:
+          Name: webserver1
+          owner: ci-cd 
+        vpc_subnet_id: "{{ subnet1_id }}"
+        assign_public_ip: yes
+      tags: ignore
+      register: webserver1
+    - name: create an EC2 instance
+      ec2:
+        key_name: "{{ keypair }}"
+        group_id: "{{ ec2_sg }}"
+        instance_type: "{{ instance_type }}"
+        image: "{{ ami }}"
+        wait: true
+        region: "{{ region }}"
+        instance_tags:
+          Name: webserver2
+          owner: ci-cd 
+        vpc_subnet_id: "{{ subnet2_id }}"
+        assign_public_ip: yes
+      tags: ignore
+      register: webserver2
+    - name: set public ip in variable
+      set_fact:
+        webserver1_ip: "{{ webserver1.instances[0].public_ip }}"
+        webserver2_ip: "{{ webserver2.instances[0].public_ip }}"      
+    - debug:
+        msg: "{{ webserver1_ip }}"
+    - debug:
+        msg: "{{ webserver2_ip }}"
+
+# Writing server ip in ansible/hosts file
+    - blockinfile:
+        path: /etc/ansible/hosts
+        block: |
+          [webserver]
+          {{ webserver1_ip }} ansible_ssh_private_key_file=/home/ansible/ketan-singapore-key.pem ansible_ssh_user=ec2-user
+          {{ webserver2_ip }} ansible_ssh_private_key_file=/home/ansible/ketan-singapore-key.pem ansible_ssh_user=ec2-user
+      tags: test
+
+# Taking instance id which is required for Load Balancer
+    - ec2_instance_facts:
+        filters:
+          "tag:owner": ci-cd
+#         "instance-state-code": "16"
+          "instance-state-name": running
+        region: "{{ region }}"
+      register: ec2_data 
+      tags: check
+    - debug:
+        msg:
+        - "{{ ec2_data.instances[0].instance_id }}"
+        - "{{ ec2_data.instances[1].instance_id }}" 
+      tags: check
+    - name: set instance id to variable
+      set_fact:
+        instance1_id: "{{ ec2_data.instances[0].instance_id }}"
+        instance2_id: "{{ ec2_data.instances[1].instance_id }}"
+ 
+    - name: creating target group
+      elb_target_group:
+        name: "{{ target_group_name }}"
+        protocol: http
+        port: 80
+        #vpc_id: "{{ vpc_id }}"
+        aws_region: "{{ region }}"
+        health_check_path: /
+        targets:
+          - Id: "{{ instance1_id }}"
+            Port: 80
+          - Id: "{{ instance2_id }}"
+            Port: 80
+        state: present
+        wait_timeout: 30
+      tags: run
+
+    - name: creating loadbalancer
+      elb_application_lb:
+        name: "{{ elb_name }}"
+        scheme: internet-facing
+        aws_region: "{{ region }}"
+        security_groups: "{{ elb_sg }}"
+        subnets:
+          - "{{ subnet1_id }}"
+          - "{{ subnet2_id }}"
+        listeners:
+          - Protocol: HTTP
+            Port: 80
+            DefaultActions:
+              - Type: forward
+                TargetGroupName: "{{ target_group_name }}"
+        state: present
+      tags: run
+

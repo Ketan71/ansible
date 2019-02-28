@@ -1,0 +1,35 @@
+aws_access_key: ""
+aws_secret_key: ""
+region: "ap-southeast-1"
+az1: "ap-southeast-1a"
+az2: "ap-southeast-1b"
+
+# VPC
+vpc_cidr: 10.10.0.0/20
+vpc_name: "CI-CD VPC"
+
+# Subnet
+subnet_name_pub: "CI-CD Subnet 1"
+subnet_cidr_pub: 10.10.0.0/24
+
+subnet_name_pvt: "CI-CD Subnet 2"
+subnet_cidr_pvt: 10.10.1.0/24
+
+igw_name: "Traffic IGW"
+
+
+#route table name
+route_name: "Public Ansible"
+
+securitygroup_name: "Ansible Security Group"
+
+#ec2 metadata
+ec2_tag: "WebServer"
+
+#region: us-east-1
+instance_type: t2.micro
+ami: ami-089fa199786190de3
+keypair: ketan-singapore-key
+
+target_group_name: "CICD-TargetGroup"
+elb_name: "CICD-ELB"
